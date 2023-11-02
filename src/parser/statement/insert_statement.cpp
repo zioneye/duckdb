@@ -98,8 +98,9 @@ string InsertStatement::ToString() const {
 	auto values_list = GetValuesList();
 	if (values_list) {
 		D_ASSERT(!default_values);
-		values_list->alias = string();
-		result += values_list->ToString();
+        auto copy_values_list = values_list->Copy();
+        copy_values_list->alias = string();
+        result += copy_values_list->ToString();
 	} else if (select_statement) {
 		D_ASSERT(!default_values);
 		result += select_statement->ToString();
