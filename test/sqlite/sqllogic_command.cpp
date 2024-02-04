@@ -10,6 +10,7 @@
 #include "catch.hpp"
 #include <list>
 #include <thread>
+#include <chrono>
 
 namespace duckdb {
 
@@ -123,6 +124,14 @@ LoopCommand::LoopCommand(SQLLogicTestRunner &runner, LoopDefinition definition_p
     : Command(runner), definition(std::move(definition_p)) {
 }
 
+ModeCommand::ModeCommand(SQLLogicTestRunner &runner, string parameter_p)
+    : Command(runner), parameter(std::move(parameter_p)) {
+}
+
+SleepCommand::SleepCommand(SQLLogicTestRunner &runner, idx_t duration, SleepUnit unit)
+    : Command(runner), duration(duration), unit(unit) {
+}
+
 struct ParallelExecuteContext {
 	ParallelExecuteContext(SQLLogicTestRunner &runner, const vector<duckdb::unique_ptr<Command>> &loop_commands,
 	                       LoopDefinition definition)
@@ -173,8 +182,10 @@ void LoopCommand::ExecuteInternal(ExecuteContext &context) const {
 	LoopDefinition loop_def = definition;
 	loop_def.loop_idx = definition.loop_start;
 	if (loop_def.is_parallel) {
-		if (context.is_parallel || !context.running_loops.empty()) {
-			throw std::runtime_error("Nested parallel loop commands not allowed");
+		for (auto &running_loop : context.running_loops) {
+			if (running_loop.is_parallel) {
+				throw std::runtime_error("Nested parallel loop commands not allowed");
+			}
 		}
 		// parallel loop: launch threads
 		std::list<ParallelExecuteContext> contexts;
@@ -282,6 +293,54 @@ void ReconnectCommand::ExecuteInternal(ExecuteContext &context) const {
 		throw std::runtime_error("Cannot reconnect in parallel");
 	}
 	runner.Reconnect();
+}
+
+void ModeCommand::ExecuteInternal(ExecuteContext &context) const {
+	if (parameter == "output_hash") {
+		runner.output_hash_mode = true;
+	} else if (parameter == "output_result") {
+		runner.output_result_mode = true;
+	} else if (parameter == "no_output") {
+		runner.output_hash_mode = false;
+		runner.output_result_mode = false;
+	} else if (parameter == "debug") {
+		runner.debug_mode = true;
+	} else {
+		throw std::runtime_error("unrecognized mode: " + parameter);
+	}
+}
+
+void SleepCommand::ExecuteInternal(ExecuteContext &context) const {
+	switch (unit) {
+	case SleepUnit::NANOSECOND:
+		std::this_thread::sleep_for(std::chrono::duration<double, std::nano>(duration));
+		break;
+	case SleepUnit::MICROSECOND:
+		std::this_thread::sleep_for(std::chrono::duration<double, std::micro>(duration));
+		break;
+	case SleepUnit::MILLISECOND:
+		std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(duration));
+		break;
+	case SleepUnit::SECOND:
+		std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(duration * 1000));
+		break;
+	default:
+		throw std::runtime_error("Unrecognized sleep unit");
+	}
+}
+
+SleepUnit SleepCommand::ParseUnit(const string &unit) {
+	if (unit == "second" || unit == "seconds" || unit == "sec") {
+		return SleepUnit::SECOND;
+	} else if (unit == "millisecond" || unit == "milliseconds" || unit == "milli") {
+		return SleepUnit::MILLISECOND;
+	} else if (unit == "microsecond" || unit == "microseconds" || unit == "micro") {
+		return SleepUnit::MICROSECOND;
+	} else if (unit == "nanosecond" || unit == "nanoseconds" || unit == "nano") {
+		return SleepUnit::NANOSECOND;
+	} else {
+		throw std::runtime_error("Unrecognized sleep mode - expected second/millisecond/microescond/nanosecond");
+	}
 }
 
 void Statement::ExecuteInternal(ExecuteContext &context) const {
